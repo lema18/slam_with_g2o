@@ -235,9 +235,6 @@ int main(int argc,char ** argv)
     }
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(g2o::make_unique<g2o::BlockSolver_6_3>(std::move(linearSolver)));
     optimizer.setAlgorithm(solver);
-    g2o::ParameterSE3Offset* cameraOffset = new g2o::ParameterSE3Offset;
-    cameraOffset->setId(0);
-    optimizer.addParameter(cameraOffset);
     //filter to reject points that are not visible in more than 3 images
     int valid_points[ident];
     //debug cnt
@@ -263,19 +260,21 @@ int main(int argc,char ** argv)
     vector<Eigen::Vector3d> points_3d;
     for (int i=0;i<ident;i++)
     {
-        points_3d.push_back(Eigen::Vector3d(0,0,0.5));
+        points_3d.push_back(Eigen::Vector3d(0,0,0.25));
     }
-    Eigen::Vector2d focal_length(517.3,516.5);
+    double focal_length=516.9;
     Eigen::Vector2d principal_point(318.6,255.3); 
-    vector<Eigen::Isometry3d,Eigen::aligned_allocator<Eigen::Isometry3d> > camera_poses;
-    g2o::VertexSCam::setKcam(focal_length[0],focal_length[1],principal_point[0],principal_point[1],0.); 
+    vector<g2o::SE3Quat,Eigen::aligned_allocator<g2o::SE3Quat> > camera_poses;
+    g2o::CameraParameters * cam_params = new g2o::CameraParameters (focal_length, principal_point, 0.);
+    cam_params->setId(0);
+    optimizer.addParameter(cam_params);
     //initialization of 50 vertices, 2 of them fixed
     int vertex_id=0;
     for(int i=0;i<nImages;i++)
     {
-        g2o::VertexSCam * v_se3=new g2o::VertexSCam();
+        g2o::VertexSE3Expmap * v_se3=new g2o::VertexSE3Expmap();
         Eigen::Quaterniond qa;
-        Eigen::Isometry3d pose;
+        g2o::SE3Quat pose;
         Eigen::Vector3d trans;
         if(i==0)
         {
@@ -287,11 +286,9 @@ int main(int argc,char ** argv)
             trans[0]=1.3405;
             trans[1]=0.6266;
             trans[2]=1.6575;
-            pose = qa;
-            pose.translation() = trans;
+            pose=g2o::SE3Quat(qa,trans);
             v_se3->setId(vertex_id);
             v_se3->setEstimate(pose);
-            v_se3->setAll();
             v_se3->setFixed(true);
             optimizer.addVertex(v_se3);
             camera_poses.push_back(pose);
@@ -306,11 +303,9 @@ int main(int argc,char ** argv)
         trans[0]=1.3303;
         trans[1]=0.6256;
         trans[2]=1.6464;
-        pose = qa;
-        pose.translation() = trans;
+        pose=g2o::SE3Quat(qa,trans);
         v_se3->setId(vertex_id);
         v_se3->setEstimate(pose);
-        v_se3->setAll();
         if(i==1)
         {
             v_se3->setFixed(true);
@@ -334,7 +329,6 @@ int main(int argc,char ** argv)
             vector<int> aux_im;
             aux_pt=pt_2d[j];
             aux_im=img_index[j];
-            int stop_flag=0;
             //we search point j on image i
             for(int p=0;p<aux_im.size();p++)
             {
@@ -362,7 +356,7 @@ int main(int argc,char ** argv)
     cout << endl;
     cout << "Performing full BA:" << endl;
     optimizer.optimize(niter);
-
+    optimizer.save("test.g2o");
 	/* Graphical representation of camera's position and 3d points*/
 	pcl::visualization::PCLVisualizer viewer("Viewer");
 	viewer.setBackgroundColor(0.35, 0.35, 0.35);
@@ -378,15 +372,17 @@ int main(int argc,char ** argv)
 		sss << i;
 		name = sss.str();
 		Eigen::Affine3f cam_pos;
-        Eigen::Isometry3d updated_pose;
+        g2o::SE3Quat updated_pose;
         Eigen::Matrix4f eig_cam_pos;
+        Eigen::Quaterniond cam_quat;
         Eigen::Matrix3d cam_rotation;
         Eigen::Vector3d cam_translation;
         g2o::HyperGraph::VertexIDMap::iterator pose_it= optimizer.vertices().find(i);
-        g2o::VertexSCam * v_se3= dynamic_cast< g2o::VertexSCam * >(pose_it->second);
+        g2o::VertexSE3Expmap * v_se3= dynamic_cast< g2o::VertexSE3Expmap * >(pose_it->second);
         updated_pose=v_se3->estimate();
-        cam_rotation=updated_pose.linear();
         cam_translation=updated_pose.translation();
+        cam_quat=updated_pose.rotation();
+        cam_rotation=cam_quat.normalized().toRotationMatrix();
         eig_cam_pos(0, 0) = cam_rotation(0,0);
 		eig_cam_pos(0, 1) = cam_rotation(0,1);
 		eig_cam_pos(0, 2) = cam_rotation(0,2);
@@ -411,15 +407,14 @@ int main(int argc,char ** argv)
 
         Eigen::Quaternionf q(cam_pos.matrix().block<3,3>(0,0));
 
-        file << 0.0 << " " << cam_pos(0,3) << " " <<  cam_pos(1,3) << " " << cam_pos(2,3) << " " << 
+        file << i << " " << cam_pos(0,3) << " " <<  cam_pos(1,3) << " " << cam_pos(2,3) << " " << 
                 q.x() << " " << q.y() << " " << q.z() << " " << q.w() << std::endl;
     
     }
     
     file.close();
-
 	pcl::PointCloud<pcl::PointXYZ> cloud;
-    for(int j=0;j<points_3d.size();j++)
+    for(int j=0;j<cnt;j++)
     {
         g2o::HyperGraph::VertexIDMap::iterator point_it= optimizer.vertices().find(vertex_id+j);
         g2o::VertexSBAPointXYZ * v_p= dynamic_cast< g2o::VertexSBAPointXYZ * > (point_it->second);
