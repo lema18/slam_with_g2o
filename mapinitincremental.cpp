@@ -108,6 +108,23 @@ void displayMatches(	cv::Mat &_img1, std::vector<cv::KeyPoint> &_features1, std:
 }
 int main(int argc,char ** argv)
 {
+    if(argc< 12)
+    {
+        cout<< "bad input\n";
+        cout << "please enter:\n";
+        cout << "argv[1]= path to rgb images\n";
+        cout << "argv[2]= number of images to compose the initial map\n";
+        cout << "argv[3]= threshold for points tha are seen in more than i images\n";
+        cout << "argv[4]= distance ratio to reject features\n";
+        cout << "argv[5]= confidence on ransac\n";
+        cout << "argv[6]= threshold for error_reprojection on ransac\n";
+        cout << "argv[7]= g2o iterations\n";
+        cout << "argv[8]= use dense solver(1 to set or 0 to disable)\n";
+        cout << "argv[9]= use robust Kernel(1 to set or 0 to disable)\n";
+        cout << "argv[10]= Nº of known poses\n";
+        cout << "argv[11]= Nº of vertices to get fixed in g2o solver\n";
+        exit(-1);
+    }
     //init calibration matrices
     Mat distcoef = (Mat_<float>(1, 5) << 0.2624, -0.9531, -0.0054, 0.0026, 1.1633);
 	Mat distor = (Mat_<float>(5, 1) << 0.2624, -0.9531, -0.0054, 0.0026, 1.1633);
@@ -131,7 +148,7 @@ int main(int argc,char ** argv)
     //threshold for error_reprojection on ransac
     double reproject_err;
     sscanf(argv[6],"%lf",&reproject_err);
-    //cvsba iterations
+    //g2o iterations
     int niter;
     sscanf(argv[7],"%d",&niter);
     //use dense solver
@@ -143,6 +160,8 @@ int main(int argc,char ** argv)
     //known poses
     int known_poses;
     sscanf(argv[10],"%d",&known_poses);
+    int cam_fixed;
+    sscanf(argv[11],"%d",&cam_fixed);
     //map for 3d points projections
     unordered_map<int,vector<Point2f>> pt_2d;
     //map for image index of 3d points projections;
@@ -156,7 +175,7 @@ int main(int argc,char ** argv)
     //identifier for 3d_point
     int ident=0;
     //we need variables to store the last image and the last features & descriptors
-    auto pt =SIFT::create();
+    auto pt =SURF::create();
     Mat foto1_u;
     vector<KeyPoint> features1;
     Mat descriptors1;
@@ -309,7 +328,10 @@ int main(int argc,char ** argv)
                 pose=g2o::SE3Quat(qa,trans);
                 v_se3->setId(vertex_id);
                 v_se3->setEstimate(pose);
-                v_se3->setFixed(true);
+                if(i<cam_fixed)
+                {
+                    v_se3->setFixed(true);
+                }
                 optimizer.addVertex(v_se3);
                 camera_poses.push_back(pose);
             }
@@ -325,52 +347,6 @@ int main(int argc,char ** argv)
         }
         myfile.close();
     }   
-/*
-    for(int i=0;i<nImages;i++)
-    {
-        g2o::VertexSE3Expmap * v_se3=new g2o::VertexSE3Expmap();
-        Eigen::Quaterniond qa;
-        g2o::SE3Quat pose;
-        Eigen::Vector3d trans;
-        if(i==0)
-        {
-            //first vertex from ground_truth
-            qa.x()=0.6574;
-            qa.y()=0.6126;
-            qa.z()=-0.2949;
-            qa.w()=-0.3248;
-            trans[0]=1.3405;
-            trans[1]=0.6266;
-            trans[2]=1.6575;
-            pose=g2o::SE3Quat(qa,trans);
-            v_se3->setId(vertex_id);
-            v_se3->setEstimate(pose);
-            v_se3->setFixed(true);
-            optimizer.addVertex(v_se3);
-            camera_poses.push_back(pose);
-            vertex_id++;
-            continue;
-        }
-        //rest of vertices are initialized on the second camera pose from ground_truth
-        qa.x()=0.6579;
-        qa.y()=0.6161;
-        qa.z()=-0.2932;
-        qa.w()=-0.3189;
-        trans[0]=1.3303;
-        trans[1]=0.6256;
-        trans[2]=1.6464;
-        pose=g2o::SE3Quat(qa,trans);
-        v_se3->setId(vertex_id);
-        v_se3->setEstimate(pose);
-        if(i==1)
-        {
-            v_se3->setFixed(true);
-        }
-        optimizer.addVertex(v_se3);
-        camera_poses.push_back(pose);
-        vertex_id++;
-    }
-*/
     int point_id=vertex_id;
     for(int j=0;j<ident;j++)
     {
