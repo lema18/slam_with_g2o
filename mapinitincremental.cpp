@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <iostream>
+#include <ctype.h>
 #include <opencv2/opencv.hpp>
 #include <cvsba/cvsba.h>
 #include <string>
@@ -22,7 +23,9 @@
 
 #include <unordered_set>
 #include <stdint.h>
-
+#include <algorithm>
+#include <iterator> 
+#include <vector>
 #include "g2o/core/sparse_optimizer.h"
 #include "g2o/types/icp/types_icp.h"
 #include "g2o/config.h"
@@ -112,6 +115,8 @@ int main(int argc,char ** argv)
 	Mat intrinseca = (Mat_<float>(3, 3) << 517.3, 0., 318.6, 0., 516.5, 255.3, 0., 0., 1.);
 	intrinseca.convertTo(intrinseca, CV_64F);
 	distcoef.convertTo(distcoef, CV_64F);
+    double focal_length=516.9;
+    Eigen::Vector2d principal_point(318.6,255.3); 
     //number of images to compose the initial map
     int nImages =  atoi(argv[2]);
     //threshold for points tha are seen in more than i images
@@ -135,18 +140,23 @@ int main(int argc,char ** argv)
     //use robust Kernel
     int robust_kernel;
     sscanf(argv[9],"%d",&robust_kernel);
+    //known poses
+    int known_poses;
+    sscanf(argv[10],"%d",&known_poses);
     //map for 3d points projections
     unordered_map<int,vector<Point2f>> pt_2d;
     //map for image index of 3d points projections;
     unordered_map<int,vector<int>> img_index;
     //map for match index
     unordered_map<int,vector<int>> match_index;
+    //map for 3d_point initialization
+    unordered_map<int,Eigen::Vector3d> init_3d;
     //iterator to iterate through images
     int l=0;
     //identifier for 3d_point
     int ident=0;
     //we need variables to store the last image and the last features & descriptors
-    auto pt =SURF::create(500);
+    auto pt =SIFT::create();
     Mat foto1_u;
     vector<KeyPoint> features1;
     Mat descriptors1;
@@ -249,6 +259,12 @@ int main(int argc,char ** argv)
             {
                 valid_points[i]=1;
                 cnt++;
+                double z=0.5; //initial z invented
+                Eigen::Vector3d init_guess;
+                init_guess[0]=((search_point->second[0].x - principal_point[0])/focal_length)*z;
+                init_guess[1]=((search_point->second[0].y - principal_point[1])/focal_length)*z;
+                init_guess[2]=z;
+                init_3d[i]=init_guess;
             }
             else
             {
@@ -257,19 +273,59 @@ int main(int argc,char ** argv)
         }
     }
     //3d points to optimize
-    vector<Eigen::Vector3d> points_3d;
-    for (int i=0;i<ident;i++)
-    {
-        points_3d.push_back(Eigen::Vector3d(0,0,0.25));
-    }
-    double focal_length=516.9;
-    Eigen::Vector2d principal_point(318.6,255.3); 
     vector<g2o::SE3Quat,Eigen::aligned_allocator<g2o::SE3Quat> > camera_poses;
     g2o::CameraParameters * cam_params = new g2o::CameraParameters (focal_length, principal_point, 0.);
     cam_params->setId(0);
     optimizer.addParameter(cam_params);
+    //timestamp tx ty tz qx qy qz qw
     //initialization of 50 vertices, 2 of them fixed
     int vertex_id=0;
+    double aux;
+    string line;
+    ifstream myfile ("/home/angel/programa_con_g2o/initial_map_for_dataset-master/first_50.txt");
+    if (myfile.is_open())
+    {
+        for(int i=0;i<nImages;i++)
+        {
+            g2o::VertexSE3Expmap * v_se3=new g2o::VertexSE3Expmap();
+            Eigen::Quaterniond qa;
+            g2o::SE3Quat pose;
+            Eigen::Vector3d trans;
+            if(i<known_poses)
+            {
+                getline(myfile,line);
+                std::istringstream in(line);
+                for(int j=0;j<8;j++)
+                {
+                    in >> aux;
+                    if(j==1) trans[0]=aux;
+                    if(j==2) trans[1]= aux;
+                    if(j==3) trans[2]= aux;
+                    if(j==4) qa.x()= aux;
+                    if(j==5) qa.y()= aux;
+                    if(j==6) qa.z()= aux;
+                    if(j==7) qa.w()= aux;
+                }
+                pose=g2o::SE3Quat(qa,trans);
+                v_se3->setId(vertex_id);
+                v_se3->setEstimate(pose);
+                v_se3->setFixed(true);
+                optimizer.addVertex(v_se3);
+                camera_poses.push_back(pose);
+            }
+            else
+            {
+                pose=camera_poses[known_poses-1];
+                v_se3->setId(vertex_id);
+                v_se3->setEstimate(pose);
+                optimizer.addVertex(v_se3);
+                camera_poses.push_back(pose);
+            }
+            vertex_id++;
+        }
+        myfile.close();
+    }   
+/*
     for(int i=0;i<nImages;i++)
     {
         g2o::VertexSE3Expmap * v_se3=new g2o::VertexSE3Expmap();
@@ -314,7 +370,7 @@ int main(int argc,char ** argv)
         camera_poses.push_back(pose);
         vertex_id++;
     }
-
+*/
     int point_id=vertex_id;
     for(int j=0;j<ident;j++)
     {
@@ -323,7 +379,7 @@ int main(int argc,char ** argv)
             g2o::VertexSBAPointXYZ * v_p= new g2o::VertexSBAPointXYZ();
             v_p->setId(point_id);
             v_p->setMarginalized(true);
-            v_p->setEstimate(points_3d.at(j));
+            v_p->setEstimate(init_3d[j]);
             optimizer.addVertex(v_p);
             vector<Point2f> aux_pt;
             vector<int> aux_im;
@@ -333,11 +389,11 @@ int main(int argc,char ** argv)
             for(int p=0;p<aux_im.size();p++)
             {
                 //we add the edge connecting the vertex of camera position and the vertex point
-                Eigen::Vector2d z(aux_pt[p].x,aux_pt[p].y);
+                Eigen::Vector2d measurement(aux_pt[p].x,aux_pt[p].y);
                 g2o::EdgeProjectXYZ2UV * e= new g2o::EdgeProjectXYZ2UV();
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(v_p));
                 e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertices().find(aux_im[p])->second));
-                e->setMeasurement(z);
+                e->setMeasurement(measurement);
                 e->information() = Eigen::Matrix2d::Identity();
                 if (robust_kernel)
                 {
