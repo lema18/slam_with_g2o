@@ -301,7 +301,8 @@ int main(int argc,char ** argv)
     int vertex_id=0;
     double aux;
     string line;
-    ifstream myfile ("/home/angel/programa_con_g2o/initial_map_for_dataset-master/first_50.txt");
+    ifstream myfile ("../first_50.txt");
+    Eigen::Matrix4d initPose = Eigen::Matrix4d::Identity();
     if (myfile.is_open())
     {
         for(int i=0;i<nImages;i++)
@@ -310,21 +311,24 @@ int main(int argc,char ** argv)
             Eigen::Quaterniond qa;
             g2o::SE3Quat pose;
             Eigen::Vector3d trans;
+            Eigen::Matrix4d poseMatrix;
             if(i<known_poses)
             {
-                getline(myfile,line);
-                std::istringstream in(line);
                 for(int j=0;j<8;j++)
                 {
-                    in >> aux;
-                    if(j==1) trans[0]=aux;
-                    if(j==2) trans[1]= aux;
-                    if(j==3) trans[2]= aux;
-                    if(j==4) qa.x()= aux;
-                    if(j==5) qa.y()= aux;
-                    if(j==6) qa.z()= aux;
-                    if(j==7) qa.w()= aux;
+                    if(j==1) trans[0]=0;
+                    if(j==2) trans[1]= 0;
+                    if(j==3) trans[2]= 0;
+                    if(j==4) qa.x()= 0;
+                    if(j==5) qa.y()= 0;
+                    if(j==6) qa.z()= 0;
+                    if(j==7) qa.w()= 1;
                 }
+       
+                std::cout << poseMatrix << std::endl;
+                qa = Eigen::Quaterniond(poseMatrix.block<3,3>(0,0));
+                trans = poseMatrix.block<3,1>(0,3);
+
                 pose=g2o::SE3Quat(qa,trans);
                 v_se3->setId(vertex_id);
                 v_se3->setEstimate(pose);
@@ -365,18 +369,25 @@ int main(int argc,char ** argv)
             for(int p=0;p<aux_im.size();p++)
             {
                 //we add the edge connecting the vertex of camera position and the vertex point
-                Eigen::Vector2d measurement(aux_pt[p].x,aux_pt[p].y);
-                g2o::EdgeProjectXYZ2UV * e= new g2o::EdgeProjectXYZ2UV();
+                g2o::EdgeSE3ProjectXYZ* e = new g2o::EdgeSE3ProjectXYZ();
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(v_p));
                 e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertices().find(aux_im[p])->second));
+                
+                Eigen::Vector2d measurement(aux_pt[p].x,aux_pt[p].y);
                 e->setMeasurement(measurement);
+                
                 e->information() = Eigen::Matrix2d::Identity();
+                
                 if (robust_kernel)
                 {
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
                 }
-                e->setParameterId(0, 0);
+                e->fx = 517.3; 
+                e->fy =  516.5; 
+                e->cx =  318.6; 
+                e->cy = 255.3;
+
                 optimizer.addEdge(e);
             }
             point_id++;
@@ -415,22 +426,25 @@ int main(int argc,char ** argv)
         cam_translation=updated_pose.translation();
         cam_quat=updated_pose.rotation();
         cam_rotation=cam_quat.normalized().toRotationMatrix();
-        eig_cam_pos(0, 0) = cam_rotation(0,0);
-		eig_cam_pos(0, 1) = cam_rotation(0,1);
-		eig_cam_pos(0, 2) = cam_rotation(0,2);
-		eig_cam_pos(0, 3) = cam_translation[0];
-		eig_cam_pos(1, 0) = cam_rotation(1,0);
-		eig_cam_pos(1, 1) = cam_rotation(1,1);
-		eig_cam_pos(1, 2) = cam_rotation(1,2);
-		eig_cam_pos(1, 3) = cam_translation[1];
-		eig_cam_pos(2, 0) = cam_rotation(2,0);
-		eig_cam_pos(2, 1) = cam_rotation(2,1);
-		eig_cam_pos(2, 2) = cam_rotation(2,2);
-		eig_cam_pos(2, 3) = cam_translation[2];
-		eig_cam_pos(3, 0) = 0;
-		eig_cam_pos(3, 1) = 0;
-		eig_cam_pos(3, 2) = 0;
-		eig_cam_pos(3, 3) = 1;
+        eig_cam_pos.block<3,3>(0,0) = cam_quat.matrix().cast<float>();
+        eig_cam_pos.block<3,1>(0,3) = cam_translation.cast<float>();
+        
+        // eig_cam_pos(0, 0) = cam_rotation(0,0);
+		// eig_cam_pos(0, 1) = cam_rotation(0,1);
+		// eig_cam_pos(0, 2) = cam_rotation(0,2);
+		// eig_cam_pos(0, 3) = cam_translation[0];
+		// eig_cam_pos(1, 0) = cam_rotation(1,0);
+		// eig_cam_pos(1, 1) = cam_rotation(1,1);
+		// eig_cam_pos(1, 2) = cam_rotation(1,2);
+		// eig_cam_pos(1, 3) = cam_translation[1];
+		// eig_cam_pos(2, 0) = cam_rotation(2,0);
+		// eig_cam_pos(2, 1) = cam_rotation(2,1);
+		// eig_cam_pos(2, 2) = cam_rotation(2,2);
+		// eig_cam_pos(2, 3) = cam_translation[2];
+		// eig_cam_pos(3, 0) = 0;
+		// eig_cam_pos(3, 1) = 0;
+		// eig_cam_pos(3, 2) = 0;
+		// eig_cam_pos(3, 3) = 1;
 
         cam_pos=eig_cam_pos;
         viewer.addCoordinateSystem(0.05, cam_pos, name);
