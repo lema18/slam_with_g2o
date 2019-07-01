@@ -416,7 +416,7 @@ int main(int argc,char ** argv)
 		name = sss.str();
 		Eigen::Affine3f cam_pos;
         g2o::SE3Quat updated_pose;
-        Eigen::Matrix4f eig_cam_pos;
+        Eigen::Matrix4f eig_cam_pos = Eigen::Matrix4f::Identity();
         Eigen::Quaterniond cam_quat;
         Eigen::Matrix3d cam_rotation;
         Eigen::Vector3d cam_translation;
@@ -446,7 +446,7 @@ int main(int argc,char ** argv)
 		// eig_cam_pos(3, 2) = 0;
 		// eig_cam_pos(3, 3) = 1;
 
-        cam_pos=eig_cam_pos;
+        cam_pos = eig_cam_pos.inverse();
         viewer.addCoordinateSystem(0.05, cam_pos, name);
 		pcl::PointXYZ textPoint(cam_pos(0,3), cam_pos(1,3), cam_pos(2,3));
 		viewer.addText3D(std::to_string(i), textPoint, 0.01, 1, 1, 1, "text_"+std::to_string(i));
